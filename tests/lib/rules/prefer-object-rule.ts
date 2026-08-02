@@ -227,5 +227,48 @@ ruleTester.run('prefer-object-rule', rule, {
         },
       ],
     },
+
+    {
+      code: "module.exports = function (context) { return {}; };\nmodule.exports.schema = [{ type: 'object' }];\nmodule.exports.deprecated = true;",
+      output:
+        "module.exports = {meta: {schema: [{ type: 'object' }], deprecated: true}, create(context) { return {}; }};\n\n",
+      errors: [
+        {
+          messageId: 'preferObject',
+          line: 1,
+          column: 18,
+          endLine: 1,
+          endColumn: 51,
+        },
+      ],
+    },
+    {
+      code: 'module.exports = (context) => { return {}; };\nmodule.exports.schema = [];',
+      output:
+        'module.exports = {meta: {schema: []}, create: (context) => { return {}; }};\n',
+      errors: [
+        {
+          messageId: 'preferObject',
+          line: 1,
+          column: 18,
+          endLine: 1,
+          endColumn: 45,
+        },
+      ],
+    },
+    {
+      code: 'module.exports = function (context) { return {}; };\nexports.deprecated = true;',
+      output:
+        'module.exports = {meta: {deprecated: true}, create(context) { return {}; }};\n',
+      errors: [
+        {
+          messageId: 'preferObject',
+          line: 1,
+          column: 18,
+          endLine: 1,
+          endColumn: 51,
+        },
+      ],
+    },
   ],
 });

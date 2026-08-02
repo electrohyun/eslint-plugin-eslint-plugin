@@ -1,9 +1,82 @@
 /**
  * @author Brad Zacher <https://github.com/bradzacher>
  */
-import type { Rule } from 'eslint';
+import type { Rule, SourceCode } from 'eslint';
+import type { Expression, Node, Program } from 'estree';
 
 import { getRuleInfo } from '../utils.ts';
+
+const META_PROPERTIES_TO_PORT = new Set(['schema', 'deprecated']);
+
+interface PortableMetaAssignment {
+  key: string;
+  valueNode: Expression;
+  statement: Node;
+}
+
+function getPortableMetaAssignments(
+  program: Program,
+): PortableMetaAssignment[] {
+  const results: PortableMetaAssignment[] = [];
+
+  for (const statement of program.body) {
+    if (statement.type !== 'ExpressionStatement') {
+      continue;
+    }
+    const expression = statement.expression;
+    if (
+      expression.type !== 'AssignmentExpression' ||
+      expression.operator !== '='
+    ) {
+      continue;
+    }
+    const left = expression.left;
+    if (left.type !== 'MemberExpression' || left.computed) {
+      continue;
+    }
+
+    let key: string | undefined;
+    if (
+      left.object.type === 'MemberExpression' &&
+      !left.object.computed &&
+      left.object.object.type === 'Identifier' &&
+      left.object.object.name === 'module' &&
+      left.object.property.type === 'Identifier' &&
+      left.object.property.name === 'exports' &&
+      left.property.type === 'Identifier'
+    ) {
+      key = left.property.name;
+    } else if (
+      left.object.type === 'Identifier' &&
+      left.object.name === 'exports' &&
+      left.property.type === 'Identifier'
+    ) {
+      key = left.property.name;
+    }
+
+    if (key && META_PROPERTIES_TO_PORT.has(key)) {
+      results.push({ key, valueNode: expression.right, statement });
+    }
+  }
+
+  return results;
+}
+
+function buildMetaPrefix(
+  assignments: PortableMetaAssignment[],
+  sourceCode: SourceCode,
+): string {
+  if (assignments.length === 0) {
+    return '';
+  }
+  const properties = assignments
+    .map(
+      (assignment) =>
+        `${assignment.key}: ${sourceCode.getText(assignment.valueNode)}`,
+    )
+    .join(', ');
+  return `meta: {${properties}}, `;
+}
 
 // ------------------------------------------------------------------------------
 // Rule Definition
@@ -37,6 +110,9 @@ const rule: Rule.RuleModule = {
           return;
         }
 
+        const metaAssignments = getPortableMetaAssignments(sourceCode.ast);
+        const metaPrefix = buildMetaPrefix(metaAssignments, sourceCode);
+
         context.report({
           node: ruleInfo.create,
           messageId: 'preferObject',
@@ -60,12 +136,19 @@ const rule: Rule.RuleModule = {
 
               yield fixer.replaceTextRange(
                 [ruleInfo.create.range[0], openParenToken.range[0]],
-                '{create',
+                `{${metaPrefix}create`,
               );
               yield fixer.insertTextAfter(ruleInfo.create, '}');
             } else if (ruleInfo.create.type === 'ArrowFunctionExpression') {
-              yield fixer.insertTextBefore(ruleInfo.create, '{create: ');
+              yield fixer.insertTextBefore(
+                ruleInfo.create,
+                `{${metaPrefix}create: `,
+              );
               yield fixer.insertTextAfter(ruleInfo.create, '}');
+            }
+
+            for (const assignment of metaAssignments) {
+              yield fixer.remove(assignment.statement);
             }
           },
         });
